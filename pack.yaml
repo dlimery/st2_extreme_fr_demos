@@ -1,0 +1,12 @@
+---
+ref: st2_extreme_fr_demos
+name: st2_extreme_fr_demos
+description: Integration samples with Splunk, Slack and more for Link Flap detection on VDX
+keywords:
+    - demo
+    - splunk
+    - vdx
+    - ewc
+version: 2.0.0
+author: David LIMERY
+email: dlimery@extremenetworks.com

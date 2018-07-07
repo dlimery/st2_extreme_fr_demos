@@ -1,0 +1,162 @@
+---
+version: '2.0'
+
+st2_extreme_fr_demos.link_flap_remed_workflow:
+
+  input:
+    - host
+    - ewc_interface_number
+    - ewc_event_date
+  tasks:
+
+    notify_on_slack:
+      action: slack.post_message
+      input:
+        message: "*ALERT:* Interface `<% $.ewc_interface_number %>` just went down on `<% $.host %>`"
+      on-success:
+        - show_run_interface
+      on-error:
+        - report_failure
+    show_run_interface:
+      action: clicrud.ops_command
+      input:
+        host: <% $.host %>
+        command: "show run interface <% $.ewc_interface_number %>"
+      publish:
+        show_run_issue: '{{ task("show_run_interface").result.result | replace("\\n", "\n") }}'
+      on-success:
+        - show_interface_status
+      on-error:
+        - report_failure
+    show_interface_status:
+      action: clicrud.ops_command
+      input:
+        host: <% $.host %>
+        command: "show interface <% $.ewc_interface_number %> | include pro"
+      publish:
+        show_status_issue: '{{ task("show_interface_status").result.result | replace("\\n", "\n") }}'
+      on-success:
+        - send_show_run_interface_to_slack
+      on-error:
+        - report_failure
+    send_show_run_interface_to_slack:
+      action: slack.post_message
+      input:
+        message: "Current interface configuration:\n ```{{ _.show_run_issue }}``` {~}"
+      on-success:
+        - send_show_interface_status_to_slack
+      on-error:
+        - report_failure
+    send_show_interface_status_to_slack:
+      action: slack.post_message
+      input:
+        message: "Current interface status:\n ```{{ _.show_status_issue }}``` {~}"
+      on-success:
+        - bring_up_msg_to_slack
+      on-error:
+        - report_failure
+    bring_up_msg_to_slack:
+      action: slack.post_message
+      input:
+        message: "OK, now trying to bring up `<% $.ewc_interface_number %>` on `<% $.host %>`... {~}"
+      on-success:
+        - bring_up_link
+      on-error:
+        - report_failure
+    bring_up_link:
+      action: clicrud.config_command
+      input:
+        host: <% $.host %>
+        command: ["int <% $.ewc_interface_number %>","no shut"]
+      on-success:
+        - show_run_interface_remed
+      on-error:
+        - report_failure
+    show_run_interface_remed:
+      action: clicrud.ops_command
+      input:
+        host: <% $.host %>
+        command: "show run interface <% $.ewc_interface_number %>"
+      publish:
+        show_run_remed: '{{ task("show_run_interface_remed").result.result | replace("\\n", "\n") }}'
+      on-success:
+        - show_interface_status_remed
+      on-error:
+        - report_failure
+    show_interface_status_remed:
+      action: clicrud.ops_command
+      input:
+        host: <% $.host %>
+        command: "show interface <% $.ewc_interface_number %>"
+      publish:
+        show_status_remed: '{{ task("show_interface_status_remed").result.result | replace("\\n", "\n") }}'
+      on-success:
+        - send_run_interface_remed_to_slack
+      on-error:
+        - report_failure
+    send_run_interface_remed_to_slack:
+      action: slack.post_message
+      input:
+        message: 'Interface configuration after remediation:```{{ _.show_run_remed }}``` {~}'
+      on-success:
+        - send_interface_status_remed_to_slack
+      on-error:
+        - report_failure
+    send_interface_status_remed_to_slack:
+      action: slack.post_message
+      input:
+        message: 'Interface state is now:```{{ _.show_status_remed }}``` {~}'
+      on-success:
+#         - create_zendesk_ticket
+        - send_ticket_msg_to_slack
+      on-error:
+        - report_failure
+    send_ticket_msg_to_slack:
+      action: slack.post_message
+      input:
+        message: "Now, all looks good. But we better create a Zendesk ticket to track this..."
+      on-success:
+        - create_zendesk_ticket
+      on-error:
+        - report_failure
+    create_zendesk_ticket:
+      action: zendesk.create_ticket
+      input:
+        subject: "Link flap: <% $.ewc_interface_number %> on <% $.host %>"
+        description:  "########################################\nINITIAL CONFIGURATION AND STATUS: \n\n {{ _.show_run_issue }} \n {{ _.show_status_issue }} \n\n\n ########################################\nFINAL CONFIGURATION AND STATUS: \n {{ _.show_run_remed }} \n {{ _.show_status_remed }} \n"
+      on-success:
+        - send_zendesk_summary_to_slack
+      on-error:
+        - report_failure
+    send_zendesk_summary_to_slack:
+      action: slack.post_message
+      input:
+        message: "*Zendesk ticket created:* Link flap: {{ _.ewc_interface_number }} on {{ _.host }} \n"
+      on-success:
+        - show_interface_status_remed_short
+      on-error:
+        - report_failure
+    show_interface_status_remed_short:
+      action: clicrud.ops_command
+      input:
+        host: <% $.host %>
+        command: "show interface <% $.ewc_interface_number %> | include pro"
+      publish:
+        show_status_remed_short: '{{ task("show_interface_status_remed_short").result.result | replace("\\n", "\n") }}'
+#      on-success:
+#        - send_sms_summary
+      on-error:
+        - report_failure
+#    send_sms_summary:
+#      action: twilio.send_sms
+#      input:
+#        body: "*One new ticket created in Zendesk: \n At {{ _.ewc_event_date }}  \n Host = {{ _.host }} \n Link down = {{ _.ewc_interface_number }} \n After remediaion attempt: \n {{ _.show_status_remed_short }} \n"
+#        from_number: "+33757904159."
+#        to_number: "+33642317422."
+#      on-error:
+#        - report_failure
+    report_failure:
+      action: slack.post_message
+      input:
+        message: "Something went wrong in link down auto-remediation!"
+
